@@ -1,0 +1,43 @@
+# 启动：conda run -n revo3_ros python world_calibration_gui.py
+# 相对路径以此配置文件所在目录为基准。
+schema_version: 1
+tag:
+  family: tag36h11
+  size_mm: 80
+  # 所有参与世界坐标显示的标签均需为 80 mm。标定只使用 ID 0。
+  ids: []
+camera:
+  name: MV-CS016-10UM_DB1933770
+  serial: DB1933770
+  image_width: 1440
+  image_height: 1080
+  intrinsics_file: ../calibration_results/hikrobot_intrinsics_20260905_124817.yaml
+detector:
+  backend: opencv
+  nthreads: 8
+  quad_decimate: 2.0
+  quad_sigma: 0.0
+  refine_edges: true
+  max_hamming: 0
+  max_reprojection_error_px: 5.0
+display:
+  draw_axis: true
+  draw_corners: true
+  show_text: true
+  show_reprojection_error: true
+  axis_length_mm: 40
+relative:
+  enabled: true
+  reference_tag_id: 0
+world_calibration:
+  # 已经过轴变换的 ID 0 在世界系中的位姿。
+  reference_xyz_mm: [126.1, -12.5, 142.0]
+  # 三个正轴同向时为零。若有额外已知旋转，在此输入 R/P/Y（度）；
+  # R_world_tag = Rz(yaw) @ Ry(pitch) @ Rx(roll)。
+  reference_rpy_deg: [0.0, 0.0, 0.0]
+  sample_count: 60
+  timeout_s: 20.0
+  max_reprojection_error_px: 1.5
+  max_translation_rms_mm: 2.0
+  max_rotation_rms_deg: 1.0
+  output_dir: ../calibration_results/world

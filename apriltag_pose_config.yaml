@@ -1,0 +1,78 @@
+# AprilTag 6D 位姿 GUI 的先验参数。
+#
+# 路径相对于本配置文件所在目录（项目根目录）解析。若把配置文件复制到
+# 其他目录，请同步修改 intrinsics_file 为绝对路径或新的相对路径。
+schema_version: 1
+
+# AprilTag 字典。tag36h11 是默认、误检率较低的常用字典；打印标签所用
+# 的 family 必须与这里完全一致。
+tag_family: tag36h11
+
+# 标签黑白方框的外边长。程序内部使用米进行 PnP 计算，这里用毫米填写
+# 以便与机械图纸一致。48.35 mm = 0.04835 m。
+tag_size_mm: 48.35
+
+# 与本项目标定工具生成的文件对应。该 YAML/JSON 内含 image_width、
+# image_height、camera_matrix 和 distortion_coefficients。
+intrinsics_file: calibration_results/hikrobot_intrinsics_20260905_124817.yaml
+
+# 可选的相机先验。程序会用标定文件中的尺寸和矩阵为准；这些字段主要
+# 用来在界面中提示当前设备，避免把另一台相机的内参误用于本相机。
+camera:
+  name: MV-CS016-10UM_DB1933770
+  serial: DB1933770
+  image_width: 1440
+  image_height: 1080
+  intrinsics_file: calibration_results/hikrobot_intrinsics_20260905_124817.yaml
+
+# 只检测指定 ID 时填写整数列表；空列表表示接收 tag36h11 字典中的全部 ID。
+# 例如：tag_ids: [0, 1, 23]
+tag_ids: []
+
+# apriltag 检测器先验/性能参数。不同 Python 后端不支持的字段会被安全忽略。
+detector:
+  # auto 优先使用 NVIDIA Isaac ROS CUDA，未安装时自动回退 OpenCV CPU。
+  # 也可以填写 nvidia/cuda（强制 CUDA）或 opencv（强制 CPU）。
+  backend: auto
+  nthreads: 2
+  # CPU 检测降采样倍率；2.0 优先保证实时帧率，1.0 保留最高细节。
+  quad_decimate: 2.0
+  quad_sigma: 0.0
+  refine_edges: true
+  decode_sharpening: 0.25
+  max_hamming: 0
+  # 只接受重投影误差不超过该值的姿态（像素）。设为 null 可关闭筛选。
+  max_reprojection_error_px: 5.0
+
+nvidia:
+  auto_start: true
+  timeout_ms: 250
+  max_tags: 64
+  tile_size: 4
+  launch_file: ""
+
+# 绘制与位姿显示设置。
+pose:
+  # 相机坐标系遵循 OpenCV：X 向右、Y 向下、Z 指向相机前方；
+  # 核心 PnP 使用米；GUI 默认将平移显示为 mm，并显示 Rodrigues/XYZ 旋转。
+  camera_frame: opencv_camera
+  translation_unit: mm
+  rotation_representation: rvec_and_euler_xyz_deg
+  axis_length_mm: 24.175
+  draw_axis: true
+  draw_corners: true
+  show_text: true
+  show_reprojection_error: true
+
+# 相对位姿输出设置。将 reference_tag_id 改成场景中的固定标签 ID 后，
+# GUI 会以该标签为参考输出其他标签的相对平移和旋转；null 时若一帧内有多个
+# 标签，GUI 自动选择当前帧 ID 最小者作为参考；只有一个标签时只显示相机相对位姿。
+reference_tag_id: null
+relative_pose:
+  enabled: true
+  reference_tag_id: null
+  output_frame: reference_tag
+  translation_unit: mm
+  rotation_representation: euler_xyz_deg
+  # T_reference_tag = inv(T_camera_reference) @ T_camera_tag
+  transform_convention: reference_T_tag

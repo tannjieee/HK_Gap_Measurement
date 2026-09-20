@@ -1,0 +1,8 @@
+# The HIKROBOT MVS Python bindings are supplied by the system SDK in /opt/MVS.
+numpy==1.26.4
+# The verified revo3_ros environment exposes cv2.aruco through this build.
+# On a standard wheel without cv2.aruco, replace this line (not alongside it)
+# with: opencv-contrib-python==4.11.0.86
+opencv-python==4.11.0.86
+PyQt5==5.15.11
+PyYAML==6.0.3

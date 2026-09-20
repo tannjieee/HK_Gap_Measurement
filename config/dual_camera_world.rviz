@@ -1,0 +1,69 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: World Grid (100 mm)
+      Enabled: true
+      Value: true
+      Cell Size: 0.1
+      Plane: XY
+      Plane Cell Count: 20
+      Alpha: 0.25
+      Color: 110; 120; 130
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/MarkerArray
+      Name: HIK cyan - Gemini orange
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /dual_camera_world/markers
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/TF
+      Name: Comparison TF
+      Enabled: false
+      Value: false
+      Show Names: true
+      Show Axes: true
+      Show Arrows: false
+      Marker Scale: 0.08
+      Frame Timeout: 1
+      Frames:
+        All Enabled: true
+  Enabled: true
+  Global Options:
+    Fixed Frame: world
+    Background Color: 25; 29; 36
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Target Frame: <Fixed Frame>
+      Distance: 1.5
+      Pitch: 0.5
+      Yaw: 0.8
+      Near Clip Distance: 0.01
+      Focal Point:
+        X: 0.1261
+        Y: -0.0125
+        Z: 0.142
+Window Geometry:
+  Width: 1400
+  Height: 900
+  X: 70
+  Y: 40

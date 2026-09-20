@@ -1,0 +1,69 @@
+# AprilTag 位姿识别示例配置（项目根目录下运行）。
+#
+# 启动：
+#   conda activate revo3_ros
+#   python apriltag_pose_gui.py --config config/apriltag_pose.yaml
+#
+# 所有相对路径都相对于项目根目录/本文件的上一级目录解析。
+schema_version: 1
+
+tag:
+  # 生成标签时使用的字典必须与此处一致。
+  family: tag36h11
+  # 黑白方框外边长，单位 mm；PnP 内部会转换为 0.04835 m。
+  size_mm: 80 #48.35
+  # 空列表表示检测该字典的所有 ID；例如 [0, 1, 23] 表示只检测这些 ID。
+  ids: [0]
+
+camera:
+  name: MV-CS016-10UM_DB1933770
+  serial: DB1933770
+  image_width: 1440
+  image_height: 1080
+  # 由棋盘格标定工具生成的内参文件（YAML 也可替换为同名 JSON）。
+  # 本文件位于 config/，因此用 .. 返回项目根目录。
+  intrinsics_file: ../calibration_results/hikrobot_intrinsics_20260905_124817.yaml
+
+detector:
+  # auto 优先使用已安装的 NVIDIA Isaac ROS CUDA 后端，否则使用 OpenCV CPU。
+  # 可选：nvidia/cuda（强制 CUDA）、opencv（强制 CPU）。
+  backend: opencv
+  nthreads: 8
+  # CPU 检测降采样倍率。2.0 可显著提高 1440×1080 下的帧率；若标签
+  # 很小或需要最高角点精度，可改回 1.0。
+  quad_decimate: 2.0
+  quad_sigma: 0.0
+  refine_edges: true
+  decode_sharpening: 0.25
+  max_hamming: 0
+  max_reprojection_error_px: 5.0
+
+# NVIDIA Isaac ROS CUDA 后端参数。auto_start=true 时 GUI 会自动启动项目内的
+# launch/isaac_ros_apriltag_bridge.launch.py；Isaac ROS 未安装时自动回退 CPU。
+nvidia:
+  auto_start: true
+  timeout_ms: 250
+  max_tags: 2
+  tile_size: 8
+  launch_file: ""
+
+display:
+  draw_axis: true
+  draw_corners: true
+  show_text: true
+  show_reprojection_error: true
+  axis_length_mm: 40 #24.175
+  translation_unit: mm
+  rotation_representation: rvec_and_euler_xyz_deg
+
+# 相对位姿以参考标签为原点。把 null 改成实际存在的 ID（例如 0）可固定参考；
+# 若保持 null 且一帧内检测到多个标签，界面自动选择当前帧 ID 最小者作为参考。
+# 只有一个标签时仍只显示它相对于相机的 6D 位姿。
+relative:
+  enabled: true
+  reference_tag_id: null
+  output_frame: reference_tag
+  translation_unit: mm
+  rotation_representation: euler_xyz_deg
+  # T_reference_tag = inv(T_camera_reference) @ T_camera_tag
+  transform_convention: reference_T_tag

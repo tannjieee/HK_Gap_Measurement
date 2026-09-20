@@ -1,0 +1,70 @@
+# Orbbec Gemini 335L — ROS 2 Jazzy / Orbbec driver v2.
+# 启动：bash scripts/run_gemini335l_ros2.sh
+# camera_name/ROS 命名空间由 launch 参数指定，默认 /gemini335l。
+serial_number: "CP2AB53000BE"
+device_num: 1
+enumerate_net_device: false
+uvc_backend: libuvc
+
+# 本机 RGB 最大分辨率 1280×800；保持 30 Hz。
+# 实机支持列表：logs/gemini335l/supported_profiles.log。
+enable_color: true
+# 关闭红外结构光投射器，避免双相机 AprilTag 比较时干扰海康图像。
+enable_laser: false
+interleave_frame_enable: false
+hdr_index1_laser_control: 0
+hdr_index0_laser_control: 0
+laser_index1_laser_control: 0
+laser_index0_laser_control: 0
+color_width: 1280
+color_height: 800
+color_fps: 30
+color_format: MJPG
+enable_color_auto_exposure: true
+color_qos: sensor_data
+color_camera_info_qos: default
+
+enable_depth: true
+depth_width: 640
+depth_height: 480
+depth_fps: 30
+depth_format: Y16
+depth_qos: sensor_data
+depth_camera_info_qos: default
+enable_depth_scale: true
+depth_registration: false
+
+enable_left_ir: true
+left_ir_width: 640
+left_ir_height: 480
+left_ir_fps: 30
+left_ir_format: Y8
+left_ir_qos: sensor_data
+left_ir_camera_info_qos: default
+enable_right_ir: true
+right_ir_width: 640
+right_ir_height: 480
+right_ir_fps: 30
+right_ir_format: Y8
+right_ir_qos: sensor_data
+right_ir_camera_info_qos: default
+
+enable_point_cloud: true
+enable_colored_point_cloud: false
+point_cloud_qos: sensor_data
+ordered_pc: false
+publish_tf: true
+tf_publish_rate: 0.0
+enable_publish_extrinsic: true
+enable_frame_sync: true
+enable_sync_host_time: true
+time_domain: global
+enable_accel: false
+enable_gyro: false
+enable_sync_output_accel_gyro: false
+
+# 本地原始图像接口不需要额外的压缩插件。
+color.image_raw.enable_pub_plugins: ["image_transport/raw"]
+depth.image_raw.enable_pub_plugins: ["image_transport/raw"]
+left_ir.image_raw.enable_pub_plugins: ["image_transport/raw"]
+right_ir.image_raw.enable_pub_plugins: ["image_transport/raw"]

@@ -1,0 +1,140 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /Status1
+        - /Depth Point Cloud1
+      Splitter Ratio: 0.55
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Value: true
+      Alpha: 0.2
+      Cell Size: 0.25
+      Plane: XY
+      Plane Cell Count: 20
+      Color: 100; 110; 125
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Depth Point Cloud
+      Enabled: true
+      Value: true
+      Alpha: 1
+      Position Transformer: XYZ
+      Color Transformer: AxisColor
+      Axis: X
+      Autocompute Value Bounds: true
+      Use rainbow: true
+      Style: Points
+      Size (Pixels): 2
+      Size (m): 0.003
+      Decay Time: 0
+      Selectable: true
+      Topic:
+        Value: /gemini335l/depth/points
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+    - Class: rviz_default_plugins/TF
+      Name: Camera TF
+      Enabled: true
+      Value: true
+      Show Arrows: false
+      Show Axes: true
+      Show Names: false
+      Marker Scale: 0.12
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+    - Class: rviz_default_plugins/Image
+      Name: Color Image
+      Enabled: true
+      Value: true
+      Normalize Range: true
+      Topic:
+        Value: /gemini335l/color/image_raw
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+    - Class: rviz_default_plugins/Image
+      Name: Depth Image
+      Enabled: true
+      Value: true
+      Normalize Range: true
+      Median window: 5
+      Topic:
+        Value: /gemini335l/depth/image_raw
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+    - Class: rviz_default_plugins/Image
+      Name: Left IR
+      Enabled: false
+      Value: false
+      Normalize Range: true
+      Topic:
+        Value: /gemini335l/left_ir/image_raw
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+    - Class: rviz_default_plugins/Image
+      Name: Right IR
+      Enabled: false
+      Value: false
+      Normalize Range: true
+      Topic:
+        Value: /gemini335l/right_ir/image_raw
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+  Enabled: true
+  Global Options:
+    Background Color: 25; 29; 36
+    Fixed Frame: gemini335l_link
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Target Frame: <Fixed Frame>
+      Distance: 2.4
+      Pitch: 0.2
+      Yaw: 3.14
+      Near Clip Distance: 0.01
+      Focal Point:
+        X: 1.5
+        Y: 0
+        Z: 0
+    Saved: ~
+Window Geometry:
+  Width: 1440
+  Height: 900
+  X: 60
+  Y: 40
+  Hide Left Dock: false
+  Hide Right Dock: false
+  Displays:
+    collapsed: false
+  Color Image:
+    collapsed: false
+  Depth Image:
+    collapsed: false

@@ -1,0 +1,31 @@
+# GEMINI 335L RGB 原始图像 + 本机新标定内参。
+schema_version: 1
+camera:
+  name: gemini335l_color
+  serial: CP2AB53000BE
+  # 1280×800 实测标定：189 张，RMS 0.1036 px。
+  # AprilTag 程序会拒绝尺寸不匹配的内参。
+  intrinsics_file: ../calibration_results/gemini335l_rgb/gemini335l_rgb_20260911_142253_747809.yaml
+ros:
+  image_topic: /gemini335l/color/image_raw
+  optical_frame: gemini335l_color_optical_frame
+  tag_frame_prefix: gemini335l_tag_
+  publish_tf: true
+tag:
+  family: tag36h11
+  size_mm: 80
+  ids: [0] # [] 表示识别全部 ID；参与测距的标签须与 size_mm 一致
+detector:
+  backend: opencv
+  quad_decimate: 1.0
+  refine_edges: true
+  max_reprojection_error_px: 5.0
+display:
+  draw_axis: true
+  draw_corners: true
+  show_text: true
+  show_reprojection_error: true
+  axis_length_mm: 40
+relative:
+  enabled: true
+  reference_tag_id: 0

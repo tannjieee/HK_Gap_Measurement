@@ -1,0 +1,17 @@
+hik_config: world_calibration.yaml
+gemini_config: gemini335l_apriltag.yaml
+# ID 0 拆除后，默认恢复这组已锁定的世界外参。
+saved_session: ../calibration_results/world/dual_20260911_144419_741510
+# 所有标签使用同一实测黑色边框边长。ID 0 标定，其余 ID 用来独立比较。
+tag_size_mm: 80
+world:
+  reference_id: 0
+  reference_xyz_mm: [126.1, -12.5, 142.0]
+  reference_rpy_deg: [0.0, 0.0, 0.0]
+  sample_count: 60
+  timeout_s: 30
+  max_reprojection_error_px: 1.5
+  max_translation_rms_mm: 2.0
+  max_rotation_rms_deg: 1.0
+  pair_tolerance_ms: 80
+  stale_s: 0.5
