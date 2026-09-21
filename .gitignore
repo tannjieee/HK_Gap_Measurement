@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 captures/
+cube_pose_runs/
 calibration_results/
 MvSdkLog/
 .cache/

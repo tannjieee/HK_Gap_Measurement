@@ -1,5 +1,7 @@
 # HIKROBOT MVS SDK Python examples
 
+AprilTag 方块检测与父／子 Link 总旋转角测量：[使用说明](TAG_CUBES.md)。启动 `bash ~/HK/scripts/tag_cubes.sh`；相机标定加 `--calibrate`。内参、样本和测量记录均保存在本项目内。
+
 本工程在 Linux 下直接调用海康机器人 MVS Python SDK，包含命令行抓图、
 实时控制 GUI、棋盘格相机内参标定工具和 AprilTag 6D 位姿识别 GUI。
 
