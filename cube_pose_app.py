@@ -18,6 +18,7 @@ import time
 _qt_env = {k:os.environ.get(k) for k in ('QT_QPA_PLATFORM_PLUGIN_PATH','QT_QPA_FONTDIR')}
 import cv2
 import numpy as np
+from apriltag_pose_core import CameraIntrinsics
 from cube_pose_core import CubeGeometry, CubePoseEstimator, draw_result, load_intrinsics
 from cube_joint_measurement import JointMeasurement, cube_at_pixel, draw_roles, relative_sample
 for _key,_value in _qt_env.items():
@@ -27,9 +28,79 @@ for _key,_value in _qt_env.items():
         os.environ[_key]=_value
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_SERIAL = 'DB0447679'
-DEFAULT_INTRINSICS = ROOT/'calibration_results/cube_MV-CU013-A0UC_DB0447679.yaml'
+DEFAULT_CAMERA_NAME = 'CH120-10GM-1'
+DEFAULT_SERIAL = 'DB1488042'
+_calibration_candidates = sorted(
+    (ROOT/'calibration_results').glob(f'{DEFAULT_CAMERA_NAME}_intrinsics_*.yaml')
+)
+DEFAULT_INTRINSICS = (
+    _calibration_candidates[-1]
+    if _calibration_candidates
+    else ROOT/'calibration_results'/f'{DEFAULT_CAMERA_NAME}_intrinsics.yaml'
+)
 RUNS = ROOT/'cube_pose_runs'
+PREVIEW_MAX_DIMENSION = 1400
+
+
+def packet_is_fresh(packet, worker_alive, *, monotonic_now=None, wall_time_ns=None):
+    """Use processing cadence to reject genuinely stale, not merely slow, frames."""
+    if packet is None or not worker_alive:
+        return False
+    monotonic_now = time.monotonic() if monotonic_now is None else monotonic_now
+    wall_time_ns = time.time_ns() if wall_time_ns is None else wall_time_ns
+    result = packet[4]
+    try:
+        fps = float(result.get('pipeline_fps', 0.0))
+        processing_s = max(0.0, float(result.get('processing_ms', 0.0)) / 1000.0)
+        received_ns = int(result['host_receive_time_ns'])
+    except (KeyError, TypeError, ValueError):
+        return False
+    period_s = 1.0 / fps if np.isfinite(fps) and fps > 0 else 0.5
+    # At the CH120's full resolution the normal cadence is about 0.33 s.
+    # Allow 2.5 frame periods, bounded so a stopped stream still expires soon.
+    ready_limit_s = min(1.25, max(0.8, 2.5 * period_s))
+    capture_limit_s = min(
+        1.8, ready_limit_s + max(0.2, min(processing_s, 0.6))
+    )
+    ready_age_s = max(0.0, monotonic_now - float(packet[0]))
+    capture_age_s = max(0.0, (wall_time_ns - received_ns) / 1e9)
+    return ready_age_s <= ready_limit_s and capture_age_s <= capture_limit_s
+
+
+def make_preview(image, result, camera, geometry, maximum_dimension=PREVIEW_MAX_DIMENSION):
+    """Render a small UI preview while keeping detection/PnP at full resolution."""
+    height, width = image.shape[:2]
+    scale = min(1.0, maximum_dimension / max(width, height))
+    if scale == 1.0:
+        return draw_result(image, result, camera, geometry)
+    preview_width = max(1, round(width * scale))
+    preview_height = max(1, round(height * scale))
+    preview = cv2.resize(
+        image, (preview_width, preview_height), interpolation=cv2.INTER_AREA
+    )
+    scaled_result = dict(result)
+    scaled_result['observations'] = [
+        dict(
+            observation,
+            corners_px=(
+                np.asarray(observation['corners_px'], dtype=float) * scale
+            ).tolist(),
+        )
+        for observation in result['observations']
+    ]
+    preview_camera = None
+    if camera is not None:
+        preview_matrix = camera.camera_matrix.copy()
+        preview_matrix[0, :] *= preview_width / width
+        preview_matrix[1, :] *= preview_height / height
+        preview_camera = CameraIntrinsics(
+            preview_matrix,
+            camera.distortion_coefficients,
+            (preview_width, preview_height),
+            camera.distortion_model,
+            camera.source_path,
+        )
+    return draw_result(preview, scaled_result, preview_camera, geometry)
 
 
 def save_json(path,data):
@@ -67,7 +138,10 @@ class FrameSource:
             self.controller=CameraController(); self.controller.open_camera(selected[0])
             # Latest-frame strategy avoids accumulating a backlog during fitting.
             if hasattr(self.controller.cam,'MV_CC_SetGrabStrategy'):
-                sdk.require_ok('Set latest-image strategy',self.controller.cam.MV_CC_SetGrabStrategy(1))
+                # Some GigE models (including MV-CH120-10GM) report
+                # MV_E_SUPPORT here.  The worker still keeps only one latest
+                # processed packet, so this SDK-side optimization is optional.
+                self.controller.cam.MV_CC_SetGrabStrategy(1)
             if self.args.exposure_us is not None:
                 self.controller.set_enum_text('ExposureAuto','Off')
                 self.controller.set_float('ExposureTime',self.args.exposure_us)
@@ -173,9 +247,10 @@ class PoseWorker(threading.Thread):
                 result.update(host_receive_time_ns=received,frame_number=number,
                               source=source.identity,calibration=self.calibration,processing_ms=elapsed)
                 annotated=draw_result(image,result,self.camera,geometry)
+                preview=make_preview(image,result,self.camera,geometry)
                 now=time.monotonic(); result['pipeline_fps']=1/max(now-last_frame,1e-6); last_frame=now
                 with self.lock:
-                    self.latest=(now,image,annotated,result)
+                    self.latest=(now,image,annotated,preview,result)
                 if self.record_file:
                     self.record_file.write(json.dumps(result,ensure_ascii=False,allow_nan=False)+'\n')
                     for cube in result['cubes']:
@@ -197,9 +272,11 @@ class PoseWorker(threading.Thread):
 
 
 def save_snapshot(packet,folder):
-    _,raw,annotated,result=packet
+    _,raw,annotated,_preview,result=packet
     folder=Path(folder); folder.mkdir(parents=True,exist_ok=False)
-    if not cv2.imwrite(str(folder/'raw.png'),raw) or not cv2.imwrite(str(folder/'detected.png'),annotated):
+    png_options = [cv2.IMWRITE_PNG_COMPRESSION, 1]
+    if (not cv2.imwrite(str(folder/'raw.png'),raw,png_options)
+            or not cv2.imwrite(str(folder/'detected.png'),annotated,png_options)):
         raise RuntimeError('Could not save snapshot image')
     save_json(folder/'poses.json',result)
 
@@ -220,7 +297,9 @@ def run_gui(args):
             super().__init__(); self.worker=None; self.packet=None; self.last_display=None
             self.measurement=JointMeasurement(); self.select_role='parent'; self.frozen=None
             self.initial_packet=self.final_packet=None; self.measurement_folder=None
-            self.setWindowTitle('AprilTag 方块 6D 位姿 / 父子 Link 转角 · MV-CU013-A0UC')
+            self.setWindowTitle(
+                f'AprilTag 03/04 方块 6D 位姿 / 父子 Link 转角 · {DEFAULT_CAMERA_NAME}'
+            )
             self.resize(1390,900)
             self.video=CameraImageView(); self.video.image_clicked.connect(self.select_at)
             panel=QWidget(); panel.setFixedWidth(460); panel_layout=QVBoxLayout(panel)
@@ -276,7 +355,7 @@ def run_gui(args):
             controls.addStretch(1)
             layout=QHBoxLayout(); layout.addWidget(self.video,1); layout.addWidget(panel)
             central=QWidget(); central.setLayout(layout); self.setCentralWidget(central)
-            self.timer=QTimer(self); self.timer.timeout.connect(self.refresh); self.timer.start(60)
+            self.timer=QTimer(self); self.timer.timeout.connect(self.refresh); self.timer.start(120)
             self.update_measurement_controls()
             QTimer.singleShot(0,self.start)
 
@@ -313,7 +392,7 @@ def run_gui(args):
             if not self.select_role or self.packet is None: return
             if not self.frozen and not self.fresh_packet():
                 self.statusBar().showMessage('画面已过期，请等待实时画面'); return
-            cube=cube_at_pixel(self.packet[3],x,y)
+            cube=cube_at_pixel(self.packet[4],x,y)
             if cube is None:
                 self.statusBar().showMessage('请点击一个已检测方块的 Tag 区域，避免两块重叠处'); return
             try:
@@ -339,21 +418,32 @@ def run_gui(args):
             self.statusBar().showMessage('已清空本次测量；已保存的文件保留，父／子选择保留。')
 
         def fresh_packet(self):
-            return (self.packet is not None and (bool(args.image) or
-                (self.worker is not None and self.worker.is_alive()
-                 and time.monotonic()-self.packet[0] <= .5
-                 and (time.time_ns()-self.packet[3]['host_receive_time_ns'])/1e9 <= .5)))
+            return self.packet is not None and (
+                bool(args.image)
+                or packet_is_fresh(
+                    self.packet,
+                    self.worker is not None and self.worker.is_alive(),
+                )
+            )
 
         def capture_angle(self,stage):
             try:
                 if self.frozen: raise ValueError('请先恢复实时画面，再定格新帧')
-                if not self.fresh_packet(): raise ValueError('当前没有新鲜画面，未采集；请等待两块同时有效')
+                if not self.fresh_packet():
+                    raise ValueError('当前显示帧已过期，未采集；请等待下一帧完成识别')
                 proposal=deepcopy(self.measurement)
-                if stage=='initial': proposal.capture_initial(self.packet[3])
-                else: proposal.capture_final(self.packet[3])
-                packet=(*self.packet[:2],draw_roles(self.packet[2],self.packet[3],proposal.parent,proposal.child),self.packet[3])
+                if stage=='initial': proposal.capture_initial(self.packet[4])
+                else: proposal.capture_final(self.packet[4])
+                full_height,full_width=self.packet[1].shape[:2]
+                preview_height,preview_width=self.packet[3].shape[:2]
+                packet=(self.packet[0],self.packet[1],
+                    draw_roles(self.packet[2],self.packet[4],proposal.parent,proposal.child),
+                    draw_roles(self.packet[3],self.packet[4],proposal.parent,proposal.child,
+                        (preview_width/full_width,preview_height/full_height)),self.packet[4])
                 folder=RUNS/('joint_angle_'+timestamp()) if stage=='initial' else self.measurement_folder
                 name='initial' if stage=='initial' else 'final_'+timestamp()
+                self.statusBar().showMessage('正在保存全分辨率图像…')
+                QApplication.processEvents()
                 save_snapshot(packet,folder/name)
                 document=proposal.as_dict()
                 document['snapshots']={'initial':'initial','final':None if stage=='initial' else name}
@@ -400,7 +490,7 @@ def run_gui(args):
             self.values.setPlainText('已停止：当前无有效位姿'); return True
 
         def load(self):
-            name,_=QFileDialog.getOpenFileName(self,'加载 MV-CU013-A0UC 内参',str(ROOT/'calibration_results'),'Calibration (*.yaml *.yml *.json)')
+            name,_=QFileDialog.getOpenFileName(self,f'加载 {DEFAULT_CAMERA_NAME} 内参',str(ROOT/'calibration_results'),'Calibration (*.yaml *.yml *.json)')
             if name:
                 try:
                     load_intrinsics(name,expected_serial=None if args.image or args.video else args.serial)
@@ -423,7 +513,14 @@ def run_gui(args):
                 self.statusBar().showMessage('没有新鲜画面可保存'); return
             folder=RUNS/('snapshot_'+timestamp())
             try:
-                packet=(*self.packet[:2],draw_roles(self.packet[2],self.packet[3],self.measurement.parent,self.measurement.child),self.packet[3])
+                full_height,full_width=self.packet[1].shape[:2]
+                preview_height,preview_width=self.packet[3].shape[:2]
+                packet=(self.packet[0],self.packet[1],
+                    draw_roles(self.packet[2],self.packet[4],self.measurement.parent,self.measurement.child),
+                    draw_roles(self.packet[3],self.packet[4],self.measurement.parent,self.measurement.child,
+                        (preview_width/full_width,preview_height/full_height)),self.packet[4])
+                self.statusBar().showMessage('正在保存全分辨率图像…')
+                QApplication.processEvents()
                 save_snapshot(packet,folder); self.statusBar().showMessage(str(folder))
             except Exception as exc: self.statusBar().showMessage(str(exc))
 
@@ -441,7 +538,7 @@ def run_gui(args):
             if self.frozen: return
             if packet is None:
                 self.info.setText(worker.status+('\n'+worker.error if worker.error else '')); return
-            stale=(not args.image and (not worker.is_alive() or time.monotonic()-packet[0]>.5))
+            stale=(not args.image and not packet_is_fresh(packet,worker.is_alive()))
             if stale:
                 self.frame_state.setText('画面已过期 / 已停止（禁止采集）')
                 self.info.setText('STALE / 已停止：无新鲜测量'); self.values.setPlainText('当前无有效位姿'); return
@@ -451,14 +548,20 @@ def run_gui(args):
             self.render_packet(packet)
 
         def render_packet(self,packet):
-            _,_,annotated,result=packet
-            annotated=draw_roles(annotated,result,self.measurement.parent,self.measurement.child)
-            rgb=np.ascontiguousarray(cv2.cvtColor(annotated,cv2.COLOR_BGR2RGB)); h,w=rgb.shape[:2]
-            q=QImage(rgb.data,w,h,rgb.strides[0],QImage.Format_RGB888).copy()
-            self.video.setImage(q)
+            _,raw,_annotated,preview,result=packet
+            full_height,full_width=raw.shape[:2]
+            h,w=preview.shape[:2]
+            preview=draw_roles(preview,result,self.measurement.parent,self.measurement.child,
+                               (w/full_width,h/full_height))
+            if hasattr(QImage,'Format_BGR888'):
+                q=QImage(preview.data,w,h,preview.strides[0],QImage.Format_BGR888).copy()
+            else:
+                rgb=cv2.cvtColor(preview,cv2.COLOR_BGR2RGB)
+                q=QImage(rgb.data,w,h,rgb.strides[0],QImage.Format_RGB888).copy()
+            self.video.setImage(q,source_size=(full_width,full_height))
             self.frame_state.setText((f'已定格：{self.frozen}（历史帧）' if self.frozen else '实时画面')+f" · 帧 {result['frame_number']}")
             cal=result['calibration']
-            self.info.setText(f"{result['source'].get('model',result['source']['type'])}  {w}×{h}\n"
+            self.info.setText(f"{result['source'].get('model',result['source']['type'])}  {full_width}×{full_height} · 预览 {w}×{h}\n"
                 f"检测+解算 {result['processing_ms']:.1f} ms | 处理 {result['pipeline_fps']:.1f} fps\n"
                 +(f"内参：{Path(cal['path']).name}" if cal else '尚未标定：只检测ID，不输出米制位姿'))
             lines=[]
@@ -491,11 +594,11 @@ def main(argv=None):
     source=parser.add_mutually_exclusive_group()
     source.add_argument('--image',type=Path); source.add_argument('--video',type=Path)
     parser.add_argument('--serial',default=DEFAULT_SERIAL)
-    parser.add_argument('--lens-mm',type=float,default=8.,help='Nominal lens focal length for records only; K is loaded from calibration')
+    parser.add_argument('--lens-mm',type=float,default=12.,help='Nominal lens focal length for records only; K is loaded from calibration')
     parser.add_argument('--intrinsics',type=Path,default=DEFAULT_INTRINSICS)
     parser.add_argument('--cube-side-mm',type=float,default=16.)
     parser.add_argument('--tag-size-mm',type=float,default=12.8)
-    parser.add_argument('--cubes',nargs='+',type=int,default=[1,2])
+    parser.add_argument('--cubes',nargs='+',type=int,default=[3,4])
     parser.add_argument('--exposure-us',type=float)
     parser.add_argument('--headless',action='store_true')
     parser.add_argument('--frames',type=int,default=0,help='Stop after this many processed frames; 0 means continuous')
@@ -518,7 +621,7 @@ def main(argv=None):
         print(worker.error,file=sys.stderr); return 1
     if worker.latest:
         if args.output: save_snapshot(worker.latest,args.output)
-        result=worker.latest[3]
+        result=worker.latest[4]
         print(json.dumps(dict(frames=worker.processed,calibrated=result['calibrated'],
              cubes=[dict(cube=x['cube'],status=x['status'],ids=x['detected_ids']) for x in result['cubes']]),indent=2))
     return 0

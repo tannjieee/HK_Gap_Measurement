@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -188,6 +189,7 @@ class CameraController:
         self.grabbing = False
         self.rgb_buffer = None
         self.rgb_buffer_size = 0
+        self.packet_size: int | None = None
 
     def open_camera(self, device) -> None:  # type: ignore[no-untyped-def]
         with self.lock:
@@ -201,6 +203,14 @@ class CameraController:
                     self.cam.MV_CC_OpenDevice(sdk.MV_ACCESS_Exclusive, 0),
                 )
                 self.device_open = True
+                if device.nTLayerType == sdk.MV_GIGE_DEVICE:
+                    packet_size = int(self.cam.MV_CC_GetOptimalPacketSize())
+                    if packet_size > 0:
+                        packet_result = self.cam.MV_CC_SetIntValue(
+                            "GevSCPSPacketSize", packet_size
+                        )
+                        if packet_result == 0:
+                            self.packet_size = packet_size
                 sdk.require_ok(
                     "Set TriggerMode=Off",
                     self.cam.MV_CC_SetEnumValue(
@@ -244,6 +254,7 @@ class CameraController:
                 self.handle_created = False
             self.rgb_buffer = None
             self.rgb_buffer_size = 0
+            self.packet_size = None
 
     def get_float(self, key: str) -> tuple[float, float, float]:
         value = MVCC_FLOATVALUE()
@@ -377,9 +388,13 @@ class MainWindow(QMainWindow):
         self.capture_thread: CaptureThread | None = None
         self.latest_image = QImage()
         self.loading_parameters = False
+        self.feature_supported: dict[str, bool] = {}
 
         self.video = VideoWidget()
         self.device_combo = QComboBox()
+        self.device_details = QLabel("尚未发现相机")
+        self.device_details.setWordWrap(True)
+        self.device_details.setStyleSheet("color: #666;")
         self.refresh_button = QPushButton("刷新设备")
         self.connect_button = QPushButton("连接")
         self.stream_button = QPushButton("开始取流")
@@ -426,6 +441,7 @@ class MainWindow(QMainWindow):
         connection_box = QGroupBox("相机")
         connection_layout = QVBoxLayout(connection_box)
         connection_layout.addWidget(self.device_combo)
+        connection_layout.addWidget(self.device_details)
         connection_buttons = QHBoxLayout()
         connection_buttons.addWidget(self.refresh_button)
         connection_buttons.addWidget(self.connect_button)
@@ -466,6 +482,7 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self.refresh_button.clicked.connect(self.refresh_devices)
+        self.device_combo.currentIndexChanged.connect(self._show_device_details)
         self.connect_button.clicked.connect(self._toggle_connection)
         self.stream_button.clicked.connect(self._toggle_stream)
         self.read_button.clicked.connect(self.refresh_parameters)
@@ -504,6 +521,21 @@ class MainWindow(QMainWindow):
             self.gain.setEnabled(False)
             self.frame_rate.setEnabled(False)
 
+    def _show_device_details(self) -> None:
+        index = self.device_combo.currentData()
+        if index is None or not self.devices:
+            self.device_details.setText(
+                "未发现相机；请确认相机供电、网线连接以及相机与有线网卡处于同一 IPv4 网段。"
+            )
+            return
+        device = self.devices[int(index)]
+        transport, model, serial = sdk.device_identity(device)
+        lines = [f"型号：{model}", f"序列号：{serial}", f"接口：{transport}"]
+        network = sdk.device_network_info(device)
+        if network:
+            lines.extend((f"相机 IP：{network[0]}", f"主机网口 IP：{network[1]}"))
+        self.device_details.setText("\n".join(lines))
+
     def refresh_devices(self) -> None:
         if self.controller.device_open:
             return
@@ -515,6 +547,7 @@ class MainWindow(QMainWindow):
                 self.device_combo.addItem(
                     f"[{index}] {model} ({serial}) - {transport}", index
                 )
+            self._show_device_details()
             if self.devices:
                 self.statusBar().showMessage(f"发现 {len(self.devices)} 台相机")
             else:
@@ -539,6 +572,10 @@ class MainWindow(QMainWindow):
             self.refresh_parameters()
             self.start_stream()
             self.poll_timer.start()
+            if self.controller.packet_size:
+                self.statusBar().showMessage(
+                    f"已连接；GigE 包长 {self.controller.packet_size} bytes"
+                )
         except Exception as exc:
             self.controller.close()
             self._set_connected_state(False)
@@ -597,30 +634,58 @@ class MainWindow(QMainWindow):
             return
         self.loading_parameters = True
         try:
-            exposure, exposure_min, exposure_max = self.controller.get_float(
-                "ExposureTime"
-            )
-            gain, gain_min, gain_max = self.controller.get_float("Gain")
-            frame_rate, frame_rate_min, frame_rate_max = self.controller.get_float(
-                "AcquisitionFrameRate"
-            )
-            self.exposure.configure(exposure_min, exposure_max, exposure)
-            self.gain.configure(gain_min, gain_max, gain)
-            self.frame_rate.configure(
-                frame_rate_min, min(frame_rate_max, 500.0), frame_rate
-            )
-            self._set_combo_from_camera("ExposureAuto", self.exposure_auto)
-            self._set_combo_from_camera("GainAuto", self.gain_auto)
-            self._set_combo_from_camera(
-                "BalanceWhiteAuto", self.white_balance_auto
-            )
-            enabled = self.controller.get_bool("AcquisitionFrameRateEnable")
-            with QSignalBlocker(self.frame_rate_enable):
-                self.frame_rate_enable.setChecked(enabled)
+            unsupported = []
+            for key, control, maximum in (
+                ("ExposureTime", self.exposure, None),
+                ("Gain", self.gain, None),
+                ("AcquisitionFrameRate", self.frame_rate, 500.0),
+            ):
+                try:
+                    current, minimum, device_maximum = self.controller.get_float(key)
+                    control.configure(
+                        minimum,
+                        min(device_maximum, maximum)
+                        if maximum is not None
+                        else device_maximum,
+                        current,
+                    )
+                    self.feature_supported[key] = True
+                except Exception:
+                    self.feature_supported[key] = False
+                    control.setEnabled(False)
+                    unsupported.append(key)
+
+            for key, combo in (
+                ("ExposureAuto", self.exposure_auto),
+                ("GainAuto", self.gain_auto),
+                ("BalanceWhiteAuto", self.white_balance_auto),
+            ):
+                try:
+                    self._set_combo_from_camera(key, combo)
+                    self.feature_supported[key] = True
+                    combo.setEnabled(True)
+                    combo.setToolTip("")
+                except Exception:
+                    self.feature_supported[key] = False
+                    combo.setEnabled(False)
+                    combo.setToolTip("当前相机不支持此参数")
+                    unsupported.append(key)
+
+            try:
+                enabled = self.controller.get_bool("AcquisitionFrameRateEnable")
+                self.feature_supported["AcquisitionFrameRateEnable"] = True
+                self.frame_rate_enable.setEnabled(True)
+                with QSignalBlocker(self.frame_rate_enable):
+                    self.frame_rate_enable.setChecked(enabled)
+            except Exception:
+                self.feature_supported["AcquisitionFrameRateEnable"] = False
+                self.frame_rate_enable.setEnabled(False)
+                unsupported.append("AcquisitionFrameRateEnable")
             self._update_manual_control_states()
-            self.statusBar().showMessage("参数已读取")
-        except Exception as exc:
-            self._show_error("读取参数失败", exc)
+            message = "参数已读取"
+            if unsupported:
+                message += "；相机不支持：" + ", ".join(unsupported)
+            self.statusBar().showMessage(message)
         finally:
             self.loading_parameters = False
 
@@ -642,9 +707,24 @@ class MainWindow(QMainWindow):
 
     def _update_manual_control_states(self) -> None:
         connected = self.controller.device_open
-        self.exposure.setEnabled(connected and self.exposure_auto.currentText() == "Off")
-        self.gain.setEnabled(connected and self.gain_auto.currentText() == "Off")
-        self.frame_rate.setEnabled(connected and self.frame_rate_enable.isChecked())
+        self.exposure.setEnabled(
+            connected
+            and self.feature_supported.get("ExposureTime", False)
+            and self.feature_supported.get("ExposureAuto", False)
+            and self.exposure_auto.currentText() == "Off"
+        )
+        self.gain.setEnabled(
+            connected
+            and self.feature_supported.get("Gain", False)
+            and self.feature_supported.get("GainAuto", False)
+            and self.gain_auto.currentText() == "Off"
+        )
+        self.frame_rate.setEnabled(
+            connected
+            and self.feature_supported.get("AcquisitionFrameRate", False)
+            and self.feature_supported.get("AcquisitionFrameRateEnable", False)
+            and self.frame_rate_enable.isChecked()
+        )
 
     def _apply_exposure(self) -> None:
         self._apply_float("ExposureTime", self.exposure.value())
@@ -680,12 +760,20 @@ class MainWindow(QMainWindow):
             return
         self.loading_parameters = True
         try:
-            self._set_combo_from_camera("ExposureAuto", self.exposure_auto)
-            self._set_combo_from_camera("GainAuto", self.gain_auto)
-            if self.exposure_auto.currentText() != "Off":
+            if self.feature_supported.get("ExposureAuto", False):
+                self._set_combo_from_camera("ExposureAuto", self.exposure_auto)
+            if self.feature_supported.get("GainAuto", False):
+                self._set_combo_from_camera("GainAuto", self.gain_auto)
+            if (
+                self.feature_supported.get("ExposureTime", False)
+                and self.exposure_auto.currentText() != "Off"
+            ):
                 current, _, _ = self.controller.get_float("ExposureTime")
                 self.exposure.set_value(current)
-            if self.gain_auto.currentText() != "Off":
+            if (
+                self.feature_supported.get("Gain", False)
+                and self.gain_auto.currentText() != "Off"
+            ):
                 current, _, _ = self.controller.get_float("Gain")
                 self.gain.set_value(current)
             self._update_manual_control_states()

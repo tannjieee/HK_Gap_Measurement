@@ -29,13 +29,14 @@ def cube_at_pixel(result, x, y):
     return hits[0] if len(hits) == 1 else None
 
 
-def draw_roles(image, result, parent, child):
+def draw_roles(image, result, parent, child, coordinate_scale=(1.0, 1.0)):
     output = image.copy()
+    scale = np.asarray(coordinate_scale, dtype=float)
     for cube, hull in cube_hulls(result).items():
         if cube not in (parent, child):
             continue
         role, color = ('PARENT', (255, 200, 40)) if cube == parent else ('CHILD', (200, 80, 255))
-        points = np.rint(hull).astype(np.int32)
+        points = np.rint(hull * scale).astype(np.int32)
         cv2.polylines(output, [points], True, color, 3, cv2.LINE_AA)
         x, y = np.min(points.reshape(-1, 2), axis=0)
         label = f'{role} {cube:02d}'

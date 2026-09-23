@@ -99,7 +99,7 @@ class JointGuiTests(unittest.TestCase):
                             QTimer.singleShot(50, exercise); return
                         window.refresh(); window.timer.stop()
                         initial = window.packet
-                        self.assertTrue(all(c['pose_valid'] for c in initial[3]['cubes']))
+                        self.assertTrue(all(c['pose_valid'] for c in initial[4]['cubes']))
                         window.resize(1480, 950); app.processEvents()
                         rect = window.video.image_rect()
                         self.assertIsNone(window.video.image_position(QPointF(-1, -1)))
@@ -110,7 +110,7 @@ class JointGuiTests(unittest.TestCase):
                             self.assertIsNone(window.video.image_position(QPointF(0, rect.center().y())))
 
                         def click_cube(cube):
-                            obs = next(o for o in window.packet[3]['observations'] if o['tag_id']//5+1 == cube)
+                            obs = next(o for o in window.packet[4]['observations'] if o['tag_id']//5+1 == cube)
                             xy = np.mean(obs['corners_px'], axis=0)
                             r = window.video.image_rect()
                             p = QPoint(round(r.x()+xy[0]*r.width()/1280), round(r.y()+xy[1]*r.height()/1024))
@@ -127,10 +127,11 @@ class JointGuiTests(unittest.TestCase):
                         # Still the same offline frame: final capture must be rejected.
                         QTest.mouseClick(window.final_button, Qt.LeftButton)
                         self.assertIsNone(window.measurement.result)
-                        final_result.update(host_receive_time_ns=initial[3]['host_receive_time_ns']+1_000_000_000,
-                            frame_number=1, source=initial[3]['source'], calibration=metadata,
+                        final_result.update(host_receive_time_ns=initial[4]['host_receive_time_ns']+1_000_000_000,
+                            frame_number=1, source=initial[4]['source'], calibration=metadata,
                             processing_ms=1., pipeline_fps=1.)
-                        final_packet = (time.monotonic(), final_image, draw_result(final_image, final_result, camera, CubeGeometry()), final_result)
+                        final_annotated = draw_result(final_image, final_result, camera, CubeGeometry())
+                        final_packet = (time.monotonic(), final_image, final_annotated, final_annotated, final_result)
                         with window.worker.lock: window.worker.latest = final_packet
                         window.refresh()
                         QTest.mouseClick(window.final_button, Qt.LeftButton)
@@ -163,7 +164,7 @@ class JointGuiTests(unittest.TestCase):
                         with window.worker.lock: window.worker.latest = stale
                         window.packet = stale; window.refresh(); window.capture_angle('initial')
                         self.assertIsNone(window.measurement.initial)
-                        self.assertIn('新鲜画面', window.statusBar().currentMessage())
+                        self.assertIn('已过期', window.statusBar().currentMessage())
                     except BaseException:
                         exceptions.append(traceback.format_exc())
                     finally:
@@ -174,7 +175,11 @@ class JointGuiTests(unittest.TestCase):
                 return original_exec()
 
             with patch.object(QApplication, 'exec_', checked_exec), patch.object(application, 'RUNS', artifact_dir):
-                application.main(['--image', str(image_path), '--intrinsics', str(calibration)])
+                application.main([
+                    '--image', str(image_path),
+                    '--intrinsics', str(calibration),
+                    '--cubes', '1', '2',
+                ])
             if exceptions: self.fail('\n'.join(exceptions))
 
 

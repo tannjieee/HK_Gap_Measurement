@@ -22,7 +22,11 @@ def sdk_error(operation: str, code: int) -> CameraError:
         0x80000203: (
             "access denied; disconnect this camera in the MVS client and check "
             "the USB udev permissions"
-        )
+        ),
+        0x80000214: (
+            "UDP receive failed; put the camera and wired network adapter on "
+            "the same IPv4 subnet"
+        ),
     }
     suffix = f" ({hints[unsigned_code]})" if unsigned_code in hints else ""
     return CameraError(f"{operation} failed: 0x{unsigned_code:08x}{suffix}")
@@ -105,6 +109,21 @@ def device_identity(device_info: MV_CC_DEVICE_INFO) -> tuple[str, str, str]:
     return (f"transport=0x{device_info.nTLayerType:x}", "unknown", "unknown")
 
 
+def ipv4_from_int(value: int) -> str:
+    """Format the big-endian IPv4 integers used by the MVS structures."""
+
+    return ".".join(str((int(value) >> shift) & 0xFF) for shift in (24, 16, 8, 0))
+
+
+def device_network_info(device_info: MV_CC_DEVICE_INFO) -> tuple[str, str] | None:
+    """Return ``(camera_ip, host_adapter_ip)`` for a GigE camera."""
+
+    if device_info.nTLayerType != MV_GIGE_DEVICE:
+        return None
+    info = device_info.SpecialInfo.stGigEInfo
+    return ipv4_from_int(info.nCurrentIp), ipv4_from_int(info.nNetExport)
+
+
 def enumerate_devices() -> tuple[MV_CC_DEVICE_INFO_LIST, list[MV_CC_DEVICE_INFO]]:
     device_list = MV_CC_DEVICE_INFO_LIST()
     require_ok(
@@ -123,7 +142,14 @@ def print_devices(devices: list[MV_CC_DEVICE_INFO]) -> None:
     print(f"Found {len(devices)} camera(s):")
     for index, device in enumerate(devices):
         transport, model, serial = device_identity(device)
-        print(f"  [{index}] {model}  serial={serial}  transport={transport}")
+        network = device_network_info(device)
+        network_text = (
+            f"  camera_ip={network[0]}  host_ip={network[1]}" if network else ""
+        )
+        print(
+            f"  [{index}] {model}  serial={serial}  transport={transport}"
+            f"{network_text}"
+        )
 
 
 def select_device(
@@ -209,6 +235,25 @@ def capture(args: argparse.Namespace, devices: list[MV_CC_DEVICE_INFO]) -> Path:
             "MV_CC_OpenDevice", cam.MV_CC_OpenDevice(MV_ACCESS_Exclusive, 0)
         )
         device_open = True
+
+        if device.nTLayerType == MV_GIGE_DEVICE:
+            packet_size = int(cam.MV_CC_GetOptimalPacketSize())
+            if packet_size > 0:
+                packet_result = cam.MV_CC_SetIntValue(
+                    "GevSCPSPacketSize", packet_size
+                )
+                if packet_result != 0:
+                    print(
+                        "Warning: setting the optimal GigE packet size failed: "
+                        f"0x{packet_result & 0xFFFFFFFF:08x}",
+                        file=sys.stderr,
+                    )
+            else:
+                print(
+                    "Warning: unable to determine the optimal GigE packet size: "
+                    f"0x{packet_size & 0xFFFFFFFF:08x}",
+                    file=sys.stderr,
+                )
 
         require_ok(
             "Set TriggerMode=Off",

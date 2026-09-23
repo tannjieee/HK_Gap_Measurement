@@ -56,6 +56,19 @@ class CubePoseTests(unittest.TestCase):
             self.assertEqual(actual['status'],'OK_MULTI_FACE')
             np.testing.assert_allclose(actual['pose']['transform'],expected,atol=1e-6)
         np.testing.assert_allclose(result['cube01_T_cube02']['transform'],np.linalg.inv(a)@b,atol=1e-6)
+        self.assertEqual(result['cube_pair_relative']['from_cube'],1)
+        self.assertEqual(result['cube_pair_relative']['to_cube'],2)
+
+    def test_cube_03_04_ids_and_generic_relative_pose(self):
+        a=matrix(); b=matrix((22,-35,-30),(.04,.015,.22))
+        estimator=CubePoseEstimator(self.camera,cube_ids=(3,4))
+        result=estimator.estimate(project(self.g,a,3)+project(self.g,b,4),(1280,1024))
+        self.assertEqual(result['cubes'][0]['detected_ids'],[10,12,14])
+        self.assertEqual(result['cubes'][1]['detected_ids'],[15,17,19])
+        self.assertIsNone(result['cube01_T_cube02'])
+        pair=result['cube_pair_relative']
+        self.assertEqual((pair['from_cube'],pair['to_cube']),(3,4))
+        np.testing.assert_allclose(pair['transform']['transform'],np.linalg.inv(a)@b,atol=1e-6)
 
     def test_whole_face_outlier_is_rejected(self):
         truth=matrix(); obs=project(self.g,truth)

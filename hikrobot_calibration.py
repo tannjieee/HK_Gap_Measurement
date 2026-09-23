@@ -63,6 +63,9 @@ for _key, _value in _qt_environment.items():
 cv2.setNumThreads(2)
 
 
+DEFAULT_CAMERA_NAME = "CH120-10GM-1"
+
+
 @dataclass
 class FramePacket:
     display_image: QImage
@@ -197,6 +200,7 @@ class CalibrationWindow(QMainWindow):
         default_output: Path,
         device_index: int,
         serial: str | None,
+        camera_name: str | None,
         auto_capture: bool,
         reject_outliers: bool,
     ) -> None:  # type: ignore[no-untyped-def]
@@ -211,6 +215,7 @@ class CalibrationWindow(QMainWindow):
         self.default_output = default_output
         self.requested_device_index = device_index
         self.requested_serial = serial
+        self.requested_camera_name = camera_name
         self.reject_outliers = reject_outliers
 
         self.controller = CameraController()
@@ -221,7 +226,7 @@ class CalibrationWindow(QMainWindow):
         self.latest_packet: FramePacket | None = None
         self.samples: list[CalibrationSample] = []
         self.last_auto_capture_at = 0.0
-        self.camera_name = "hikrobot_camera"
+        self.camera_name = camera_name or "hikrobot_camera"
         self._feature_change_failed = False
         self._feature_change_stopped_stream = False
         self._feature_change_invalidates_samples = False
@@ -283,7 +288,7 @@ class CalibrationWindow(QMainWindow):
         tip.setWordWrap(True)
         board_layout.addWidget(tip)
         lens_tip = QLabel(
-            "<b>6 mm 定焦镜头：</b>软件参数不能增加光学景深。请先在实际工作"
+            "<b>12 mm 镜头：</b>软件参数不能增加光学景深。请先在实际工作"
             "距离完成物理调焦；有光圈环时适当收小光圈并补光，尽量保持低增益、"
             "短曝光。标定期间不要再转动对焦环或光圈环。"
         )
@@ -356,7 +361,8 @@ class CalibrationWindow(QMainWindow):
             f"<b>方格数：{self.board.squares_x} × {self.board.squares_y}</b><br>"
             f"OpenCV 内角点：{self.board.inner_corners_x} × "
             f"{self.board.inner_corners_y} = {self.board.point_count} 点<br>"
-            f"方格边长：{self.board.square_size_mm:g} mm"
+            f"方格边长：{self.board.square_size_mm:g} mm<br>"
+            f"保存相机名：<b>{self.camera_name}</b>"
         )
 
     def _set_connected_state(self, connected: bool) -> None:
@@ -434,7 +440,9 @@ class CalibrationWindow(QMainWindow):
                 raise RuntimeError(
                     f"未找到序列号为 {self.requested_serial} 的相机"
                 )
-            self.camera_name = f"{model}_{serial}" if serial else model
+            if not self.requested_camera_name:
+                self.camera_name = f"{model}_{serial}" if serial else model
+                self._update_board_text()
             self.controller.open_camera(device)
             self._set_connected_state(True)
             if not self.start_stream():
@@ -803,6 +811,19 @@ class CalibrationWindow(QMainWindow):
         )
         if not filename:
             return
+
+        # Full-resolution frames are large (4096x3000 RGB is about 35 MiB).
+        # Calibration and PNG encoding block the GUI event loop, so leaving the
+        # capture thread running would queue frames faster than Qt can release
+        # them and the OS can kill the process for excessive memory use.
+        was_streaming = bool(
+            self.capture_thread is not None and self.capture_thread.isRunning()
+        )
+        if was_streaming and not self.stop_stream():
+            return
+        # Release any already queued, generation-invalidated frame packets
+        # before starting the blocking calibration calculation.
+        QApplication.processEvents()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             result = calibrate_samples(
@@ -823,6 +844,8 @@ class CalibrationWindow(QMainWindow):
             return
         finally:
             QApplication.restoreOverrideCursor()
+            if was_streaming and self.controller.device_open:
+                self.start_stream()
 
         matrix = result.camera_matrix
         distortion = result.distortion_coefficients
@@ -940,6 +963,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device-index", type=int, default=0)
     parser.add_argument("--serial", help="select a live camera by serial number")
     parser.add_argument(
+        "--camera-name",
+        default=DEFAULT_CAMERA_NAME,
+        help=(
+            "camera name stored in YAML/JSON and used in the default filename "
+            f"(default: {DEFAULT_CAMERA_NAME})"
+        ),
+    )
+    parser.add_argument(
         "--manual",
         action="store_true",
         help="disable automatic diverse-view collection",
@@ -969,6 +1000,13 @@ def board_from_args(args: argparse.Namespace) -> BoardSpec:
         return BoardSpec(corners_x + 1, corners_y + 1, args.square_size_mm)
     squares_x, squares_y = args.squares or (12, 9)
     return BoardSpec(squares_x, squares_y, args.square_size_mm)
+
+
+def filename_safe_camera_name(camera_name: str) -> str:
+    """Return a portable filename component while preserving the metadata name."""
+
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", camera_name.strip()).strip("._")
+    return safe_name or "hikrobot_camera"
 
 
 def collect_image_paths(inputs: Sequence[str]) -> list[Path]:
@@ -1061,14 +1099,15 @@ def run_offline(args: argparse.Namespace, board: BoardSpec) -> int:
             reject_outliers=not args.no_reject_outliers,
         )
         output = args.output or Path("calibration_results") / (
-            f"hikrobot_intrinsics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.yaml"
+            f"{filename_safe_camera_name(args.camera_name)}_intrinsics_"
+            f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.yaml"
         )
         yaml_path, json_path, sample_directory = save_calibration(
             output,
             result,
             board,
             samples,
-            camera_name="hikrobot_offline",
+            camera_name=args.camera_name,
         )
     except Exception as exc:
         print(f"Error: calibration failed: {exc}", file=sys.stderr)
@@ -1101,7 +1140,8 @@ def run_gui(args: argparse.Namespace, board: BoardSpec) -> int:
         app = QApplication(sys.argv)
         app.setApplicationName("HIKROBOT Intrinsic Calibration")
         output = args.output or Path("calibration_results") / (
-            f"hikrobot_intrinsics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.yaml"
+            f"{filename_safe_camera_name(args.camera_name)}_intrinsics_"
+            f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.yaml"
         )
         window = CalibrationWindow(
             sdk,
@@ -1111,6 +1151,7 @@ def run_gui(args: argparse.Namespace, board: BoardSpec) -> int:
             default_output=output,
             device_index=args.device_index,
             serial=args.serial,
+            camera_name=args.camera_name,
             auto_capture=not args.manual,
             reject_outliers=not args.no_reject_outliers,
         )

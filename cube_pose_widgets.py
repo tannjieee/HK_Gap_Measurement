@@ -10,16 +10,21 @@ class CameraImageView(QWidget):
     def __init__(self):
         super().__init__()
         self.image = QImage()
+        self.source_size = None
         self.message = '等待相机'
         self.setMinimumSize(640, 480)
 
     def setText(self, message):
         self.message = message
         self.image = QImage()
+        self.source_size = None
         self.update()
 
-    def setImage(self, image):
-        self.image = image.copy()
+    def setImage(self, image, source_size=None):
+        # QImage is implicitly shared, so retaining it is safe and avoids a
+        # second full image copy on every UI refresh.
+        self.image = image
+        self.source_size = source_size or (image.width(), image.height())
         self.update()
 
     def image_rect(self):
@@ -33,8 +38,9 @@ class CameraImageView(QWidget):
         rect = self.image_rect()
         if rect.isEmpty() or not rect.contains(point):
             return None
-        return ((point.x()-rect.x())*self.image.width()/rect.width(),
-                (point.y()-rect.y())*self.image.height()/rect.height())
+        source_width, source_height = self.source_size
+        return ((point.x()-rect.x())*source_width/rect.width(),
+                (point.y()-rect.y())*source_height/rect.height())
 
     def paintEvent(self, event):
         painter = QPainter(self)

@@ -6,6 +6,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from cube_joint_measurement import JointMeasurement, cube_at_pixel, relative_sample
+from cube_pose_app import packet_is_fresh
 from cube_pose_core import pose_fields
 
 
@@ -131,6 +132,23 @@ class JointMeasurementTests(unittest.TestCase):
         self.assertEqual(cube_at_pixel(result, 35, 20), 2)
         for point in ((25, 20), (1, 1), (85, 85)):
             self.assertIsNone(cube_at_pixel(result, *point))
+
+    def test_freshness_allows_normal_full_resolution_pipeline_jitter(self):
+        result = {
+            'pipeline_fps': 3.0,
+            'processing_ms': 350.0,
+            'host_receive_time_ns': int(99.1e9),
+        }
+        packet = (99.3, None, None, None, result)
+        self.assertTrue(packet_is_fresh(
+            packet, True, monotonic_now=100.0, wall_time_ns=int(100e9)
+        ))
+        self.assertFalse(packet_is_fresh(
+            packet, False, monotonic_now=100.0, wall_time_ns=int(100e9)
+        ))
+        self.assertFalse(packet_is_fresh(
+            packet, True, monotonic_now=101.0, wall_time_ns=int(101e9)
+        ))
 
 
 if __name__ == '__main__': unittest.main()

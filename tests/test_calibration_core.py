@@ -17,6 +17,7 @@ from calibration_core import (
     detect_chessboard,
     save_calibration,
 )
+from hikrobot_calibration import filename_safe_camera_name
 
 
 def rotation_vector(rx: float, ry: float, rz: float) -> np.ndarray:
@@ -101,6 +102,12 @@ class BoardSpecTest(unittest.TestCase):
             BoardSpec(12, 9, 0)
         with self.assertRaises(ValueError):
             BoardSpec(12, 9, math.nan)
+
+    def test_camera_name_is_made_safe_for_default_filename(self) -> None:
+        self.assertEqual(
+            filename_safe_camera_name("CH120-10GM-1"), "CH120-10GM-1"
+        )
+        self.assertEqual(filename_safe_camera_name(" camera / 1 "), "camera_1")
 
 
 class DetectionTest(unittest.TestCase):

@@ -150,15 +150,34 @@ class CubePoseEstimator:
             else:
                 cubes.append(self._fit(base,selected))
         relative = None
+        relative_pair = None
         by_id = {c['cube']:c for c in cubes}
-        if all(i in by_id and by_id[i]['pose_valid'] for i in (1,2)):
-            relative = pose_fields(np.linalg.inv(np.asarray(by_id[1]['pose']['transform']))
-                                   @ np.asarray(by_id[2]['pose']['transform']))
+        if len(self.cube_ids) >= 2:
+            first_cube, second_cube = self.cube_ids[:2]
+            if all(
+                i in by_id and by_id[i]['pose_valid']
+                for i in (first_cube, second_cube)
+            ):
+                relative = pose_fields(
+                    np.linalg.inv(
+                        np.asarray(by_id[first_cube]['pose']['transform'])
+                    )
+                    @ np.asarray(by_id[second_cube]['pose']['transform'])
+                )
+                relative_pair = dict(
+                    from_cube=first_cube,
+                    to_cube=second_cube,
+                    transform=relative,
+                )
+        legacy_relative = (
+            relative if tuple(self.cube_ids[:2]) == (1, 2) else None
+        )
         return dict(frame_convention='T_camera_cube: cube centre -> camera; camera +X right, +Y down, +Z forward',
                     cube_convention='Origin at cube centre; +X blank attachment face; +Y left arm; +Z top arm',
                     rpy_convention='fixed-axis XYZ in degrees; R=Rz(yaw) Ry(pitch) Rx(roll)',
                     image_size=list(image_size), calibrated=calibrated, cubes=cubes,
-                    observations=clean, cube01_T_cube02=relative,
+                    observations=clean, cube_pair_relative=relative_pair,
+                    cube01_T_cube02=legacy_relative,
                     cube_side_m=self.geometry.side_m, tag_black_border_m=self.geometry.tag_size_m)
 
     def _fit(self, base, observations):
